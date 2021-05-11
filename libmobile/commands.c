@@ -105,15 +105,20 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
     switch (packet->command) {
     case MOBILE_COMMAND_BEGIN_SESSION:
         // Errors:
-        // 0 - ???
         // 1 - Invalid use (Already begun a session)
         // 2 - Invalid contents
 
         if (s->session_begun) return error_packet(packet, 1);
-        if (packet->length != 8) return error_packet(packet, 2);
+        if (adapter->config.device != MOBILE_ADAPTER_RED) {
+            if (packet->length != 8) return error_packet(packet, 2);
+        } else {
+            if (packet->length < 8) return error_packet(packet, 2);
+            packet->length = 8;
+        }
         if (memcmp(packet->data, "NINTENDO", 8) != 0) {
             return error_packet(packet, 2);
         }
+
         s->session_begun = true;
         s->state = MOBILE_CONNECTION_DISCONNECTED;
         memset(s->connections, false, sizeof(s->connections));
@@ -195,7 +200,7 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
     case MOBILE_COMMAND_HANG_UP_TELEPHONE:
         // Errors:
         // 0 - ???
-        // 1 - Generic phone error
+        // 1 - Invalid use (already hung up/phone unplugged)
         // TODO: Actually implement
         //return error_packet(packet, 0);  // UNKERR
         // TODO: What happens if the packet has a body? Probably nothing.
@@ -210,9 +215,8 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
     case MOBILE_COMMAND_WAIT_FOR_TELEPHONE_CALL:
         // Errors:
         // 0 - No call received/phone not connected
-        // 1 - ???
-        // 2 - ???
-        // 3 - Unrecoverable error
+        // 1 - Invalid use (already calling)
+        // 3 - Internal error (ringing but picking up fails)
 
         // TODO: What happens if the packet has a body? Probably nothing.
 
@@ -239,7 +243,7 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
 
     case MOBILE_COMMAND_TRANSFER_DATA:
         // Errors:
-        // 0 - Communication error
+        // 0 - Invalid connection (not connected)
         // 1 - Invalid use (Call was ended/never made)
         // 2 - UNKERR: Invalid contents
 
@@ -372,9 +376,10 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
 
     case MOBILE_COMMAND_ISP_LOGIN:
         // Errors:
-        // 0 - UNKERR: Invalid contents
-        // 1 - Phone is not connected
-        // 2 - UNKERR: Invalid use, already logged in.
+        // 1 - Invalid use (Not in a call)
+        // 2 - Unknown error (timeout)
+        // 3 - Unknown error (timeout)
+
         if (s->state != MOBILE_CONNECTION_CALL) {
             return error_packet(packet, 1);
         }
@@ -389,6 +394,7 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
         }
 
         // TODO: Actually implement?
+        // TODO: Maximum username and password size: 0x20
         const unsigned char *data = packet->data;
         if (packet->data + packet->length < data + 1 + data[0]) {
             return error_packet(packet, 0);  // UNKERR
@@ -404,6 +410,7 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
         memcpy(s->dns1, data + 0, 4);
         memcpy(s->dns2, data + 4, 4);
 
+        // TODO: Returns 3 ips! (last two are DNS?)
         s->state = MOBILE_CONNECTION_INTERNET;
         packet->data[0] = 0;
         packet->data[1] = 0;
@@ -415,7 +422,9 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
     case MOBILE_COMMAND_ISP_LOGOUT:
         // TODO: What happens if the packet has a body? Probably nothing.
         // Errors:
-        // 0 - UNKERR: Not connected to the internet
+        // 0 - Not logged in
+        // 1 - Invalid use (Not in a call)
+        // 2 - Unknown error (timeout)
 
         if (s->state != MOBILE_CONNECTION_INTERNET) {
             return error_packet(packet, 0);  // UNKERR
@@ -427,9 +436,9 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
 
     case MOBILE_COMMAND_OPEN_TCP_CONNECTION:
         // Errors:
-        // 0 - UNKERR: Not connected to the internet
-        // 1 - UNKERR: Invalid contents
-        // 2 - UNKERR: Too many connections
+        // 0 - Too many connections
+        // 1 - Invalid use (not in a call/logged in)
+        // 3 - Connection failed
 
         if (s->state != MOBILE_CONNECTION_INTERNET) {
             return error_packet(packet, 0);  // UNKERR
@@ -462,8 +471,9 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
     case MOBILE_COMMAND_CLOSE_TCP_CONNECTION:
         // TODO: What happens if the packet has extra data? Probably nothing.
         // Errors:
-        // 0 - UNKERR: Not connected
-        // 1 - UNKERR: Invalid contents
+        // 0 - Invalid connection (not connected)
+        // 1 - Invalid use (not in a call/logged in)
+        // 2 - Unknown error
 
         if (packet->length != 1) {
             return error_packet(packet, 1);  // UNKERR
@@ -504,9 +514,11 @@ struct mobile_packet *mobile_packet_process(struct mobile_adapter *adapter, stru
         packet->length = 4;
         return packet;
 
+    // TODO: Command 0x3F FIRMWARE_VERSION never returns anything and locks
+    //         you out of all commands, except 0x16 and 0x11 (blue adapter only).
+
     default:
-        // Just echo the same thing back
-        // TODO: What does the adapter do with unknown packets?
-        return packet;
+        // Nonexisting commands can't be used at any time
+        return error_packet(packet, 1);
     }
 }
