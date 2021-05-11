@@ -78,7 +78,7 @@ unsigned char mobile_transfer(struct mobile_adapter *adapter, unsigned char c)
         if (s->current >= s->data_size + 6) {
             uint16_t in_checksum = s->buffer[s->current - 2] << 8 |
                                    s->buffer[s->current - 1];
-            if (s->checksum != in_checksum) {
+            if (s->checksum != in_checksum && !s->mode_32bit_cur) {
                 s->error = MOBILE_SERIAL_ERROR_CHECKSUM;
             }
             s->current = 0;
