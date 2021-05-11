@@ -1,7 +1,6 @@
 #pragma once
 
 #include <stdbool.h>
-
 #include "atomic.h"
 struct mobile_adapter;
 
